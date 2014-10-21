@@ -2,6 +2,7 @@ import json
 import hashlib
 import logging
 import os
+from string import join
 import threading
 import time
 import datetime
@@ -9,7 +10,6 @@ import itertools
 
 import peewee
 from passlib.apps import custom_app_context as pwd_context
-from playhouse.postgres_ext import ArrayField
 from flask.ext.login import UserMixin, AnonymousUserMixin
 
 from redash import utils, settings
@@ -19,7 +19,7 @@ class Database(object):
     def __init__(self):
         self.database_config = dict(settings.DATABASE_CONFIG)
         self.database_name = self.database_config.pop('name')
-        self.database = peewee.PostgresqlDatabase(self.database_name, **self.database_config)
+        self.database = peewee.MySQLDatabase(self.database_name, **self.database_config)
         self.app = None
         self.pid = os.getpid()
 
@@ -81,8 +81,8 @@ class Group(BaseModel):
 
     id = peewee.PrimaryKeyField()
     name = peewee.CharField(max_length=100)
-    permissions = ArrayField(peewee.CharField, default=DEFAULT_PERMISSIONS)
-    tables = ArrayField(peewee.CharField)
+    permissions = peewee.CharField(default=join(DEFAULT_PERMISSIONS, ','))
+    tables = peewee.CharField()
     created_at = peewee.DateTimeField(default=datetime.datetime.now)
 
     class Meta:
@@ -108,7 +108,7 @@ class User(BaseModel, UserMixin):
     name = peewee.CharField(max_length=320)
     email = peewee.CharField(max_length=320, index=True, unique=True)
     password_hash = peewee.CharField(max_length=128, null=True)
-    groups = ArrayField(peewee.CharField, default=DEFAULT_GROUPS)
+    groups = peewee.CharField(default=join(DEFAULT_GROUPS, ","))
 
     class Meta:
         db_table = 'users'

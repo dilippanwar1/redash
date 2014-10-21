@@ -14,7 +14,7 @@ def parse_db_url(url):
         connection['host'] = url_parts.hostname
         connection['port'] = url_parts.port
         connection['user'] = url_parts.username
-        connection['password'] = url_parts.password
+        connection['passwd'] = url_parts.password
 
     return connection
 
@@ -49,7 +49,7 @@ CONNECTION_ADAPTER = os.environ.get("REDASH_CONNECTION_ADAPTER", "pg")
 CONNECTION_STRING = os.environ.get("REDASH_CONNECTION_STRING", "user= password= host= port=5439 dbname=")
 
 # Connection settings for re:dash's own database (where we store the queries, results, etc)
-DATABASE_CONFIG = parse_db_url(os.environ.get("REDASH_DATABASE_URL", "postgresql://postgres"))
+DATABASE_CONFIG = parse_db_url(os.environ.get("REDASH_DATABASE_URL", "mysql://root:@localhost:3306/redash"))
 
 # Celery related settings
 CELERY_BROKER = os.environ.get("REDASH_CELERY_BROKER", REDIS_URL)

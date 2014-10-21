@@ -46,7 +46,7 @@ def index(**kwargs):
         'id': current_user.id,
         'name': current_user.name,
         'email': current_user.email,
-        'groups': current_user.groups,
+        'groups': current_user.groups.split(","),
         'permissions': current_user.permissions
     }
 
