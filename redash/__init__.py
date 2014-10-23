@@ -1,6 +1,4 @@
 import logging
-import urlparse
-import redis
 from statsd import StatsClient
 
 from redash import settings
@@ -16,18 +14,5 @@ def setup_logging():
     logging.getLogger().setLevel(settings.LOG_LEVEL)
 
 
-def create_redis_connection():
-    redis_url = urlparse.urlparse(settings.REDIS_URL)
-    if redis_url.path:
-        redis_db = redis_url.path[1]
-    else:
-        redis_db = 0
-
-    r = redis.StrictRedis(host=redis_url.hostname, port=redis_url.port, db=redis_db, password=redis_url.password)
-
-    return r
-
-
 setup_logging()
-redis_connection = create_redis_connection()
 statsd_client = StatsClient(host=settings.STATSD_HOST, port=settings.STATSD_PORT, prefix=settings.STATSD_PREFIX)

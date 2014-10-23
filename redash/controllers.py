@@ -18,9 +18,9 @@ from flask.ext.restful import Resource, abort
 from flask_login import current_user, login_user, logout_user
 import sqlparse
 
-from redash import redis_connection, statsd_client, models, settings, utils, __version__
+from redash import statsd_client, models, settings, utils, __version__
 from redash.wsgi import app, auth, api
-from redash.tasks import QueryTask, record_event
+from redash.models import QueryTask
 from redash.cache import headers as cache_headers
 from redash.permissions import require_permission
 
@@ -46,7 +46,7 @@ def index(**kwargs):
         'id': current_user.id,
         'name': current_user.name,
         'email': current_user.email,
-        'groups': current_user.groups.split(","),
+        'groups': current_user.groups,
         'permissions': current_user.permissions
     }
 
@@ -95,8 +95,6 @@ def logout():
 @require_permission('admin')
 def status_api():
     status = {}
-    info = redis_connection.info()
-    status['redis_used_memory'] = info['used_memory_human']
     status['version'] = __version__
     status['queries_count'] = models.Query.select().count()
     status['query_results_count'] = models.QueryResult.select().count()
@@ -105,8 +103,7 @@ def status_api():
 
     status['workers'] = []
 
-    manager_status = redis_connection.hgetall('redash:status')
-    status['manager'] = manager_status
+    status['manager'] = {}
     status['manager']['outdated_queries_count'] = models.Query.outdated_queries().count()
 
     queues = {}
@@ -118,8 +115,7 @@ def status_api():
     status['manager']['queues'] = {}
     for queue, sources in queues.iteritems():
         status['manager']['queues'][queue] = {
-            'data_sources': ', '.join(sources),
-            'size': redis_connection.llen(queue)
+            'data_sources': ', '.join(sources)
         }
 
     return jsonify(status)
@@ -155,7 +151,7 @@ class EventAPI(BaseResource):
     def post(self):
         events_list = request.get_json(force=True)
         for event in events_list:
-            record_event.delay(event)
+            models.Event.record(event)
 
 
 api.add_resource(EventAPI, '/api/events', endpoint='events')

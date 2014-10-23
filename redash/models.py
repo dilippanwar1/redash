@@ -12,8 +12,21 @@ import peewee
 from passlib.apps import custom_app_context as pwd_context
 from flask.ext.login import UserMixin, AnonymousUserMixin
 
-from redash import utils, settings
+from redash import utils, settings, statsd_client
+from redash.data.query_runner import get_query_runner
 
+
+class ArrayField(peewee.CharField):
+    def __init__(self, *args, **kwargs):
+        peewee.CharField.__init__(self, *args, **kwargs)
+        if self.default is not None:
+            self.default = join(self.default, ',')
+
+    def db_value(self, value):
+        return str(join(value, ','))
+
+    def python_value(self, value):
+        return str(value).split(",")
 
 class Database(object):
     def __init__(self):
@@ -81,8 +94,8 @@ class Group(BaseModel):
 
     id = peewee.PrimaryKeyField()
     name = peewee.CharField(max_length=100)
-    permissions = peewee.CharField(default=join(DEFAULT_PERMISSIONS, ','))
-    tables = peewee.CharField()
+    permissions = ArrayField(default=DEFAULT_PERMISSIONS)
+    tables = ArrayField()
     created_at = peewee.DateTimeField(default=datetime.datetime.now)
 
     class Meta:
@@ -108,7 +121,7 @@ class User(BaseModel, UserMixin):
     name = peewee.CharField(max_length=320)
     email = peewee.CharField(max_length=320, index=True, unique=True)
     password_hash = peewee.CharField(max_length=128, null=True)
-    groups = peewee.CharField(default=join(DEFAULT_GROUPS, ","))
+    groups = ArrayField(default=DEFAULT_GROUPS)
 
     class Meta:
         db_table = 'users'
@@ -240,18 +253,18 @@ class QueryResult(BaseModel):
         return query.first()
 
     @classmethod
-    def store_result(cls, data_source_id, query_hash, query, data, run_time, retrieved_at):
+    def store_result(cls, data_source, query_hash, query, data, run_time, retrieved_at):
         query_result = cls.create(query_hash=query_hash,
                                   query=query,
                                   runtime=run_time,
-                                  data_source=data_source_id,
+                                  data_source=data_source,
                                   retrieved_at=retrieved_at,
                                   data=data)
 
         logging.info("Inserted query (%s) data; id=%s", query_hash, query_result.id)
 
         updated_count = Query.update(latest_query_data=query_result).\
-            where(Query.query_hash==query_hash, Query.data_source==data_source_id).\
+            where(Query.query_hash == query_hash, Query.data_source == data_source).\
             execute()
 
         logging.info("Updated %s queries with result (%s).", updated_count, query_hash)
@@ -541,7 +554,76 @@ class Event(BaseModel):
         return event
 
 
-all_models = (DataSource, User, QueryResult, Query, Dashboard, Visualization, Widget, ActivityLog, Group, Event)
+class QueryTask(BaseModel):
+    id = peewee.PrimaryKeyField()
+    updated_at = peewee.DateTimeField(default=datetime.datetime.now)
+    user = peewee.ForeignKeyField(User)
+    query_result = peewee.ForeignKeyField(QueryResult, null=True)
+    data_source = peewee.ForeignKeyField(DataSource)
+    status = peewee.CharField(default="PENDING")
+    error = peewee.CharField(default="")
+    query_hash = peewee.CharField(default="")
+    query = peewee.TextField(default="")
+
+    MAX_RETRIES = 5
+
+    class Meta:
+        db_table = 'query_tasks'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'updated_at': self.updated_at,
+            'status': self.status,
+            'error': self.error,
+            'query_result_id': self.query_result.id
+        }
+
+    def execute_query(self):
+        self.status = 'STARTED'
+        self.save()
+
+        start_time = time.time()
+
+        logging.info("Executing query:\n%s", self.query)
+
+        query_runner = get_query_runner(self.data_source.type, self.data_source.options)
+
+        with statsd_client.timer('query_runner.{}.{}.run_time'.format(self.data_source.type, self.data_source.name)):
+            data, error = query_runner(self.query)
+
+        run_time = time.time() - start_time
+        logging.info("Query finished... data length=%s, error=%s", data and len(data), error)
+
+        self.error = error
+        self.save()
+
+        # TODO: it is possible that storing the data will fail, and we will need to retry
+        # while we already marked the job as done
+        if not error:
+            models.QueryResult.store_result(
+                self.data_source,
+                self.query_hash,
+                self.query,
+                data,
+                run_time,
+                datetime.datetime.utcnow())
+        else:
+            raise Exception(error)
+
+
+all_models = (
+    DataSource,
+    User,
+    QueryResult,
+    Query,
+    Dashboard,
+    Visualization,
+    Widget,
+    ActivityLog,
+    Group,
+    Event,
+    QueryTask)
 
 
 def init_db():
